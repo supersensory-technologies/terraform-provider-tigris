@@ -155,6 +155,13 @@ func (c *Client) UpdateBucket(ctx context.Context, input *types.BucketUpdateInpu
 		upReq.ObjectRegions = &regions
 	}
 
+	// Set delete protection if provided.
+	if input.DeleteProtection != nil {
+		upReq.Protection = &types.BucketProtection{
+			Protected: *input.DeleteProtection,
+		}
+	}
+
 	body, err := json.Marshal(upReq)
 	if err != nil {
 		return fmt.Errorf("failed to marshal update request: %w", err)

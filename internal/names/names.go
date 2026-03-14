@@ -19,6 +19,9 @@ const (
 	AttrLocationRegions    = "regions"
 	AttrDefaultStorageTier = "default_storage_tier"
 
+	// Bucket protection attributes.
+	AttrDeleteProtection = "delete_protection"
+
 	// Snapshot and fork attributes.
 	AttrEnableSnapshot           = "enable_snapshot"
 	AttrSourceBucket             = "source_bucket"

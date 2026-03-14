@@ -80,6 +80,12 @@ func resourceTigrisBucket() *schema.Resource {
 				ForceNew:    true,
 				Description: "Enable snapshots for this bucket. Cannot be changed after creation.",
 			},
+			names.AttrDeleteProtection: {
+				Type:        schema.TypeBool,
+				Optional:    true,
+				Default:     false,
+				Description: "Enable delete protection for this bucket. When enabled, the bucket cannot be deleted.",
+			},
 		},
 	}
 }
@@ -143,6 +149,23 @@ func resourceBucketCreate(ctx context.Context, d *schema.ResourceData, meta inte
 
 	d.SetId(bucketName)
 
+	// Delete protection cannot be set at creation time; apply as a post-create update.
+	if v, ok := d.GetOk(names.AttrDeleteProtection); ok && v.(bool) {
+		deleteProtection := true
+		protectionInput := &types.BucketUpdateInput{
+			Bucket:           bucketName,
+			DeleteProtection: &deleteProtection,
+		}
+
+		tflog.Info(ctx, "Enabling delete protection on bucket", map[string]interface{}{
+			"bucket_name": bucketName,
+		})
+
+		if err := svc.UpdateBucket(ctx, protectionInput); err != nil {
+			return diag.FromErr(fmt.Errorf("unable to enable delete protection, %w", err))
+		}
+	}
+
 	return resourceBucketRead(ctx, d, meta)
 }
 
@@ -190,6 +213,9 @@ func resourceBucketRead(ctx context.Context, d *schema.ResourceData, meta interf
 	// Set enable snapshot.
 	d.Set(names.AttrEnableSnapshot, metadata.IsSnapshotEnabled())
 
+	// Set delete protection.
+	d.Set(names.AttrDeleteProtection, metadata.IsDeleteProtectionEnabled())
+
 	return nil
 }
 
@@ -224,6 +250,12 @@ func resourceBucketUpdate(ctx context.Context, d *schema.ResourceData, meta inte
 			}
 			needsUpdate = true
 		}
+	}
+
+	if d.HasChange(names.AttrDeleteProtection) {
+		deleteProtection := d.Get(names.AttrDeleteProtection).(bool)
+		input.DeleteProtection = &deleteProtection
+		needsUpdate = true
 	}
 
 	if needsUpdate {

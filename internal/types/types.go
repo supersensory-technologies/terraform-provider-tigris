@@ -79,6 +79,7 @@ type BucketMetadata struct {
 	Shadow        *BucketShadowConfig  `json:"shadow_bucket"`
 	Website       *BucketWebsiteConfig `json:"website"`
 	ForkInfo      *ForkInfo            `json:"ForkInfo"`
+	Protection    *BucketProtection    `json:"protection"`
 }
 
 type BucketMD struct {
@@ -104,6 +105,14 @@ func (b *BucketMetadata) GetPublicObjectsListEnabled() bool {
 	}
 
 	return false
+}
+
+// IsDeleteProtectionEnabled returns whether delete protection is enabled.
+func (b *BucketMetadata) IsDeleteProtectionEnabled() bool {
+	if b.Protection == nil {
+		return false
+	}
+	return b.Protection.Protected
 }
 
 // GetStorageClass returns the storage class, defaulting to STANDARD.
@@ -191,6 +200,11 @@ type ForkInfo struct {
 	Parents     []ForkParentInfo `json:"Parents"`
 }
 
+// BucketProtection represents the protection configuration for a bucket.
+type BucketProtection struct {
+	Protected bool `json:"protected"`
+}
+
 // BucketUpdateInput is the input for the CreateBucket and UpdateBucket functions.
 type BucketUpdateInput struct {
 	// The name of the bucket to create.
@@ -222,6 +236,9 @@ type BucketUpdateInput struct {
 
 	// The snapshot version to fork from.
 	ForkSourceSnapshot *string
+
+	// Whether to enable delete protection for the bucket.
+	DeleteProtection *bool
 }
 
 // BucketUpdateRequest is the request body for the UpdateBucket API.
@@ -229,6 +246,7 @@ type BucketUpdateRequest struct {
 	Website       *BucketWebsiteConfig `json:"website,omitempty"`
 	Shadow        *BucketShadowConfig  `json:"shadow_bucket,omitempty"`
 	ObjectRegions *string              `json:"object_regions,omitempty"`
+	Protection    *BucketProtection    `json:"protection,omitempty"`
 }
 
 type BucketUpdateResponse struct {
