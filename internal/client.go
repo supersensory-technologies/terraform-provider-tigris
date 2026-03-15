@@ -351,7 +351,10 @@ func (c *Client) doRequestWithRetry(req *http.Request) (*http.Response, error) {
 	if backoffDelay == 0 {
 		backoffDelay = 3 * time.Second
 	}
-	maxBackoffDelay := 20 * backoffDelay
+	const maxBackoffDelay = 60 * time.Second
+	if backoffDelay > maxBackoffDelay {
+		backoffDelay = maxBackoffDelay
+	}
 
 	var lastStatusCode int
 
