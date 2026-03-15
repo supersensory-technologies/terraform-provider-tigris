@@ -12,6 +12,7 @@ SUITES=(
   bucket-fork
   bucket-update
   bucket-public-access
+  bucket-delete-protection
 )
 FAILED_SUITES=()
 
@@ -45,16 +46,69 @@ for suite in "${SUITES[@]}"; do
   # With dev_overrides, init still runs but skips provider download
   terraform init -input=false > /dev/null 2>&1 || true
 
-  # Apply
-  if terraform apply -auto-approve -input=false -var "test_id=${TEST_ID}"; then
+  if [ "$suite" = "bucket-delete-protection" ]; then
+    # Helper: best-effort cleanup for protected buckets
+    cleanup_protected() {
+      terraform apply -auto-approve -input=false \
+        -var "test_id=${TEST_ID}" \
+        -var "deletion_protection=false" 2>/dev/null || true
+      terraform destroy -auto-approve -input=false \
+        -var "test_id=${TEST_ID}" \
+        -var "deletion_protection=false" 2>/dev/null || true
+    }
+
+    # Special test: verify that destroy is blocked while protection is enabled
+    if ! terraform apply -auto-approve -input=false -var "test_id=${TEST_ID}"; then
+      FAILED_SUITES+=("$suite")
+      echo "==> FAIL: ${suite} (apply with protection enabled)"
+      cleanup_protected
+      echo ""
+      continue
+    fi
+
+    # Destroy MUST fail while protection is on
+    if terraform destroy -auto-approve -input=false -var "test_id=${TEST_ID}" 2>/dev/null; then
+      FAILED_SUITES+=("$suite")
+      echo "==> FAIL: ${suite} (destroy succeeded but should have been blocked)"
+      echo ""
+      continue
+    fi
+    echo "   destroy correctly blocked by deletion_protection"
+
+    # Disable protection, then destroy — both must succeed
+    if ! terraform apply -auto-approve -input=false \
+      -var "test_id=${TEST_ID}" \
+      -var "deletion_protection=false"; then
+      FAILED_SUITES+=("$suite")
+      echo "==> FAIL: ${suite} (could not disable protection)"
+      cleanup_protected
+      echo ""
+      continue
+    fi
+    echo "   deletion_protection disabled"
+
+    if ! terraform destroy -auto-approve -input=false \
+      -var "test_id=${TEST_ID}" \
+      -var "deletion_protection=false"; then
+      FAILED_SUITES+=("$suite")
+      echo "==> FAIL: ${suite} (destroy failed after disabling protection)"
+      echo ""
+      continue
+    fi
+
     echo "==> PASS: ${suite}"
   else
-    FAILED_SUITES+=("$suite")
-    echo "==> FAIL: ${suite}"
-  fi
+    # Standard suite: apply then destroy
+    if terraform apply -auto-approve -input=false -var "test_id=${TEST_ID}"; then
+      echo "==> PASS: ${suite}"
+    else
+      FAILED_SUITES+=("$suite")
+      echo "==> FAIL: ${suite}"
+    fi
 
-  # Always destroy to clean up resources
-  terraform destroy -auto-approve -input=false -var "test_id=${TEST_ID}" 2>/dev/null || true
+    # Always destroy to clean up resources
+    terraform destroy -auto-approve -input=false -var "test_id=${TEST_ID}" 2>/dev/null || true
+  fi
 
   echo ""
 done

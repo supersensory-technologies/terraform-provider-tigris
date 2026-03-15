@@ -114,12 +114,14 @@ The tigris_bucket resource creates and manages a Tigris bucket. This resource su
   - regions: (Optional) The region codes. For `multi`: `usa` or `eur`. For `single`/`dual`: specific region codes like `sjc`, `iad`, `ams`, etc.
 - default_storage_tier: (Optional) The default storage tier for objects in the bucket. Possible values: `STANDARD`, `STANDARD_IA`, `GLACIER`, `GLACIER_IR`. Cannot be changed after creation.
 - enable_snapshot: (Optional) Enable snapshots for this bucket. Defaults to `false`. Cannot be changed after creation.
+- deletion_protection: (Optional) Enable deletion protection for this bucket. Defaults to `false`. When enabled, the bucket cannot be deleted.
 
 ```hcl
 resource "tigris_bucket" "example_bucket" {
   bucket               = "my-custom-bucket"
   default_storage_tier = "STANDARD_IA"
   enable_snapshot      = true
+  deletion_protection  = true
 
   location {
     type    = "single"

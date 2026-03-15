@@ -80,6 +80,12 @@ func resourceTigrisBucket() *schema.Resource {
 				ForceNew:    true,
 				Description: "Enable snapshots for this bucket. Cannot be changed after creation.",
 			},
+			names.AttrDeleteProtection: {
+				Type:        schema.TypeBool,
+				Optional:    true,
+				Default:     false,
+				Description: "Enable deletion protection for this bucket. When enabled, the bucket cannot be deleted.",
+			},
 		},
 	}
 }
@@ -143,6 +149,36 @@ func resourceBucketCreate(ctx context.Context, d *schema.ResourceData, meta inte
 
 	d.SetId(bucketName)
 
+	// Deletion protection cannot be set at creation time; apply as a post-create update.
+	if d.Get(names.AttrDeleteProtection).(bool) {
+		deleteProtection := true
+		protectionInput := &types.BucketUpdateInput{
+			Bucket:           bucketName,
+			DeleteProtection: &deleteProtection,
+		}
+
+		tflog.Info(ctx, "Enabling delete protection on bucket", map[string]interface{}{
+			"bucket_name": bucketName,
+		})
+
+		if err := svc.UpdateBucket(ctx, protectionInput); err != nil {
+			// Roll back: delete the bucket so Terraform doesn't store a
+			// tainted resource with deletion_protection=true in state
+			// while the API has it disabled — that would permanently
+			// block destroy.
+			d.SetId("")
+			if deleteErr := svc.DeleteBucket(ctx, bucketName); deleteErr != nil {
+				return diag.FromErr(fmt.Errorf(
+					"unable to enable deletion protection (%w); also failed to roll back bucket: %w",
+					err, deleteErr,
+				))
+			}
+			return diag.FromErr(fmt.Errorf(
+				"unable to enable deletion protection (bucket rolled back): %w", err,
+			))
+		}
+	}
+
 	return resourceBucketRead(ctx, d, meta)
 }
 
@@ -168,29 +204,27 @@ func resourceBucketRead(ctx context.Context, d *schema.ResourceData, meta interf
 		return nil
 	}
 
-	d.Set(names.AttrBucket, bucketName)
-
 	// Fetch metadata to read location and storage tier.
 	metadata, err := svc.GetBucketMetadata(ctx, bucketName)
 	if err != nil {
 		return diag.FromErr(fmt.Errorf("unable to read bucket metadata, %w", err))
 	}
 
-	// Set storage tier.
-	d.Set(names.AttrDefaultStorageTier, metadata.GetStorageClass())
+	var diags diag.Diagnostics
 
-	// Set location.
+	diags = append(diags, diag.FromErr(d.Set(names.AttrBucket, bucketName))...)
+	diags = append(diags, diag.FromErr(d.Set(names.AttrDefaultStorageTier, metadata.GetStorageClass()))...)
+
 	locationType, regions := metadata.GetLocationTypeAndRegions()
 	locationBlock := map[string]interface{}{
 		names.AttrLocationType:    string(locationType),
 		names.AttrLocationRegions: regions,
 	}
-	d.Set(names.AttrLocation, []interface{}{locationBlock})
+	diags = append(diags, diag.FromErr(d.Set(names.AttrLocation, []interface{}{locationBlock}))...)
+	diags = append(diags, diag.FromErr(d.Set(names.AttrEnableSnapshot, metadata.IsSnapshotEnabled()))...)
+	diags = append(diags, diag.FromErr(d.Set(names.AttrDeleteProtection, metadata.IsDeleteProtectionEnabled()))...)
 
-	// Set enable snapshot.
-	d.Set(names.AttrEnableSnapshot, metadata.IsSnapshotEnabled())
-
-	return nil
+	return diags
 }
 
 func resourceBucketUpdate(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
@@ -226,6 +260,12 @@ func resourceBucketUpdate(ctx context.Context, d *schema.ResourceData, meta inte
 		}
 	}
 
+	if d.HasChange(names.AttrDeleteProtection) {
+		deleteProtection := d.Get(names.AttrDeleteProtection).(bool)
+		input.DeleteProtection = &deleteProtection
+		needsUpdate = true
+	}
+
 	if needsUpdate {
 		tflog.Info(ctx, "Updating bucket", map[string]interface{}{
 			"bucket_name": bucketName,
@@ -243,6 +283,13 @@ func resourceBucketDelete(ctx context.Context, d *schema.ResourceData, meta inte
 	svc := meta.(*Client)
 
 	bucketName := d.Id()
+
+	if d.Get(names.AttrDeleteProtection).(bool) {
+		return diag.Errorf(
+			"bucket %q has %s enabled; set %s = false before destroying",
+			bucketName, names.AttrDeleteProtection, names.AttrDeleteProtection,
+		)
+	}
 
 	err := svc.DeleteBucket(ctx, bucketName)
 	if err != nil {
