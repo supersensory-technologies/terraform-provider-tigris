@@ -188,12 +188,16 @@ func (c *Client) UpdateBucket(ctx context.Context, input *types.BucketUpdateInpu
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		var errResp types.BucketUpdateResponse
+		if decodeErr := json.NewDecoder(resp.Body).Decode(&errResp); decodeErr == nil && errResp.ErrorMessage != "" {
+			return fmt.Errorf("update failed (status %d): %s", resp.StatusCode, errResp.ErrorMessage)
+		}
+		return fmt.Errorf("update failed with status %d", resp.StatusCode)
+	}
 	var upResp types.BucketUpdateResponse
 	if err = json.NewDecoder(resp.Body).Decode(&upResp); err != nil {
-		return fmt.Errorf("decoding update response (status %d): %w", resp.StatusCode, err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("update failed: %s", upResp.ErrorMessage)
+		return fmt.Errorf("decoding update response: %w", err)
 	}
 
 	return nil
