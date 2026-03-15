@@ -28,4 +28,21 @@ const (
 	AttrForkSourceBucket         = "fork_source_bucket"
 	AttrForkSourceBucketSnapshot = "fork_source_bucket_snapshot"
 	AttrForkCreatedAt            = "fork_created_at"
+
+	// IAM policy attributes.
+	AttrName        = "name"
+	AttrDescription = "description"
+	AttrStatement   = "statement"
+	AttrEffect      = "effect"
+	AttrActions     = "actions"
+	AttrResources   = "resources"
+	AttrArn         = "arn"
+	AttrPolicyID    = "policy_id"
+
+	// Access key attributes.
+	AttrAccessKeyID     = "access_key_id"
+	AttrSecretAccessKey = "secret_access_key"
+	AttrBucketRole      = "bucket_role"
+	AttrRole            = "role"
+	AttrStatus          = "status"
 )

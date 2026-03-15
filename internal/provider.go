@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 )
 
 func Provider() *schema.Provider {
@@ -29,6 +30,13 @@ func Provider() *schema.Provider {
 				Default:     DefaultEndpoint,
 				Description: "The endpoint for the Tigris object storage service.",
 			},
+			"iam_endpoint": {
+				Type:         schema.TypeString,
+				Optional:     true,
+				DefaultFunc:  schema.EnvDefaultFunc("TIGRIS_IAM_ENDPOINT", DefaultIAMEndpoint),
+				ValidateFunc: validation.IsURLWithHTTPS,
+				Description:  "The endpoint for the Tigris IAM service. It can also be sourced from the TIGRIS_IAM_ENDPOINT environment variable.",
+			},
 		},
 		ResourcesMap: map[string]*schema.Resource{
 			"tigris_bucket":                resourceTigrisBucket(),
@@ -37,6 +45,8 @@ func Provider() *schema.Provider {
 			"tigris_bucket_shadow_config":  resourceTigrisBucketShadowConfig(),
 			"tigris_bucket_snapshot":       resourceTigrisBucketSnapshot(),
 			"tigris_bucket_fork":           resourceTigrisBucketFork(),
+			"tigris_iam_policy":            resourceTigrisIAMPolicy(),
+			"tigris_access_key":            resourceTigrisAccessKey(),
 		},
 		ConfigureFunc: providerConfigure,
 	}
@@ -46,8 +56,9 @@ func providerConfigure(d *schema.ResourceData) (interface{}, error) {
 	accessKey := d.Get("access_key").(string)
 	secretKey := d.Get("secret_key").(string)
 	endpoint := d.Get("endpoint").(string)
+	iamEndpoint := d.Get("iam_endpoint").(string)
 
-	svc, err := NewClient(endpoint, accessKey, secretKey)
+	svc, err := NewClient(endpoint, iamEndpoint, accessKey, secretKey)
 	if err != nil {
 		return nil, fmt.Errorf("unable to load SDK config, %w", err)
 	}

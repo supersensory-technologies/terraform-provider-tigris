@@ -1,0 +1,1 @@
+terraform import tigris_access_key.nas_upload tid_1234567890abcdef

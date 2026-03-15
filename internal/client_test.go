@@ -216,3 +216,15 @@ func TestDoRequestWithRetry_WithBody(t *testing.T) {
 		t.Fatalf("expected 2 calls (1 failure + 1 success), got %d", calls.Load())
 	}
 }
+
+func TestIsIAMNotFoundError(t *testing.T) {
+	t.Parallel()
+
+	if !IsIAMNotFoundError(&iamAPIError{statusCode: http.StatusNotFound, message: "missing"}) {
+		t.Fatalf("expected 404 iamAPIError to be treated as not found")
+	}
+
+	if IsIAMNotFoundError(errors.New("missing")) {
+		t.Fatalf("plain errors must not be treated as IAM not found errors")
+	}
+}

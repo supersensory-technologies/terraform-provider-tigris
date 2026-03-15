@@ -21,6 +21,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	shttp "github.com/aws/smithy-go/transport/http"
+	"github.com/google/uuid"
 	"github.com/tigrisdata/terraform-provider-tigris/internal/types"
 )
 
@@ -28,8 +29,16 @@ const (
 	// DefaultEndpoint is the default endpoint for Tigris object storage service.
 	DefaultEndpoint = "https://fly.storage.tigris.dev"
 
+	// DefaultIAMEndpoint is the default endpoint for Tigris IAM APIs.
+	DefaultIAMEndpoint = "https://iam.storageapi.dev"
+
 	// DefaultRegion is the default region for Tigris object storage service.
 	DefaultRegion = "auto"
+
+	// Tigris IAM uses the same SigV4 service scope as object storage. The official
+	// JS SDK signs requests to iam.storageapi.dev with service "s3", so this client
+	// intentionally mirrors that behavior for compatibility.
+	sigV4ServiceS3 = "s3"
 
 	// Headers for the requests to Tigris.
 	HeaderContentType          = "Content-Type"
@@ -54,12 +63,13 @@ type Client struct {
 	signer         *v4.Signer
 	credentials    aws.Credentials
 	endpoint       string
+	iamEndpoint    string
 	httpClient     *http.Client
 	s3Client       *s3.Client
 	retryBaseDelay time.Duration // initial backoff delay; 0 uses default (3s)
 }
 
-func NewClient(endpoint, accessKeyID, secretAccessKey string) (*Client, error) {
+func NewClient(endpoint, iamEndpoint, accessKeyID, secretAccessKey string) (*Client, error) {
 	// Load AWS configuration
 	cfg, err := config.LoadDefaultConfig(context.TODO(),
 		config.WithRegion(DefaultRegion),
@@ -85,10 +95,210 @@ func NewClient(endpoint, accessKeyID, secretAccessKey string) (*Client, error) {
 			AccessKeyID:     accessKeyID,
 			SecretAccessKey: secretAccessKey,
 		},
-		endpoint:   endpoint,
-		httpClient: &http.Client{},
-		s3Client:   svc,
+		endpoint:    endpoint,
+		iamEndpoint: iamEndpoint,
+		httpClient:  &http.Client{},
+		s3Client:    svc,
 	}, nil
+}
+
+func (c *Client) CreatePolicy(ctx context.Context, input *types.PolicyCreateInput) (*types.Policy, error) {
+	form := url.Values{}
+	form.Set("PolicyName", input.Name)
+	form.Set("Description", input.Description)
+	form.Set("ReqUUID", uuid.NewString())
+
+	document, err := json.Marshal(input.Document)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal policy document: %w", err)
+	}
+	form.Set("PolicyDocument", string(document))
+
+	var resp types.CreatePolicyResponse
+	if err := c.doIAMRequest(ctx, "/?Action=CreatePolicy", form, &resp); err != nil {
+		return nil, err
+	}
+
+	if resp.CreatePolicyResult.Policy.ARN == "" {
+		return nil, errors.New("failed to create policy")
+	}
+
+	return &resp.CreatePolicyResult.Policy, nil
+}
+
+func (c *Client) GetPolicy(ctx context.Context, arn string) (*types.PolicyDetailed, error) {
+	form := url.Values{}
+	form.Set("PolicyArn", arn)
+
+	var resp types.GetPolicyResponse
+	if err := c.doIAMRequest(ctx, "/?Action=GetPolicyDetailed", form, &resp); err != nil {
+		return nil, err
+	}
+
+	if resp.PolicyDetailed.ARN == "" {
+		return nil, &iamAPIError{
+			statusCode: http.StatusNotFound,
+			message:    "policy not found",
+		}
+	}
+
+	var document types.PolicyDocument
+	if err := json.Unmarshal([]byte(resp.PolicyDetailed.Document), &document); err != nil {
+		return nil, fmt.Errorf("failed to parse policy document: %w", err)
+	}
+
+	return &types.PolicyDetailed{
+		Policy: types.Policy{
+			AttachmentCount: resp.PolicyDetailed.AttachmentCount,
+			CreateDate:      resp.PolicyDetailed.CreateDate,
+			DefaultVersion:  resp.PolicyDetailed.DefaultVersion,
+			Description:     resp.PolicyDetailed.Description,
+			ID:              resp.PolicyDetailed.ID,
+			Name:            resp.PolicyDetailed.Name,
+			Path:            resp.PolicyDetailed.Path,
+			ARN:             resp.PolicyDetailed.ARN,
+			UpdateDate:      resp.PolicyDetailed.UpdateDate,
+		},
+		Document: document,
+		Users:    resp.PolicyDetailed.Users,
+	}, nil
+}
+
+func (c *Client) UpdatePolicy(ctx context.Context, input *types.PolicyUpdateInput) (*types.Policy, error) {
+	form := url.Values{}
+	form.Set("PolicyArn", input.ARN)
+	form.Set("ReqUUID", uuid.NewString())
+	form.Set("Description", input.Description)
+
+	document, err := json.Marshal(input.Document)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal policy document: %w", err)
+	}
+	form.Set("PolicyDocument", string(document))
+
+	var resp types.UpdatePolicyResponse
+	if err := c.doIAMRequest(ctx, "/?Action=UpdatePolicy", form, &resp); err != nil {
+		return nil, err
+	}
+
+	if resp.UpdatePolicyResult.Policy.ARN == "" {
+		return nil, errors.New("failed to update policy")
+	}
+
+	return &resp.UpdatePolicyResult.Policy, nil
+}
+
+func (c *Client) DeletePolicy(ctx context.Context, arn string) error {
+	form := url.Values{}
+	form.Set("PolicyArn", arn)
+
+	return c.doIAMRequest(ctx, "/?Action=ForceDeletePolicy", form, nil)
+}
+
+func (c *Client) CreateAccessKey(ctx context.Context, input *types.AccessKeyCreateInput) (*types.AccessKey, error) {
+	form := url.Values{}
+	roles := input.Roles
+	if roles == nil {
+		roles = []types.BucketRole{}
+	}
+
+	reqBody, err := json.Marshal(map[string]interface{}{
+		"req_uuid":     uuid.NewString(),
+		"name":         input.Name,
+		"buckets_role": roles,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal access key request: %w", err)
+	}
+	form.Set("Req", string(reqBody))
+
+	var resp types.CreateAccessKeyResponse
+	if err := c.doIAMRequest(ctx, "/?Action=CreateAccessKeyWithBucketsRole", form, &resp); err != nil {
+		return nil, err
+	}
+
+	if resp.CreateAccessKeyResult.AccessKey.AccessKeyID == "" {
+		return nil, errors.New("unable to create access key")
+	}
+
+	return &types.AccessKey{
+		ID:        resp.CreateAccessKeyResult.AccessKey.AccessKeyID,
+		Name:      resp.CreateAccessKeyResult.AccessKey.UserName,
+		Secret:    resp.CreateAccessKeyResult.AccessKey.SecretAccessKey,
+		CreatedAt: resp.CreateAccessKeyResult.AccessKey.CreateDate,
+		Status:    "active",
+		Roles:     roles,
+	}, nil
+}
+
+func (c *Client) GetAccessKey(ctx context.Context, id string) (*types.AccessKey, error) {
+	form := url.Values{}
+	form.Set("Action", "ListAccessKeys")
+	form.Set("KeyId", id)
+
+	var resp types.ListAccessKeysResponse
+	if err := c.doIAMRequest(ctx, "/?Detailed", form, &resp); err != nil {
+		return nil, err
+	}
+
+	if len(resp.Keys) == 0 {
+		return nil, &iamAPIError{
+			statusCode: http.StatusNotFound,
+			message:    "access key not found",
+		}
+	}
+
+	key := resp.Keys[0]
+	return &types.AccessKey{
+		ID:             key.AccessKeyID,
+		Name:           key.UserName,
+		CreatedAt:      key.CreatedAt.String(),
+		Status:         key.Status,
+		OrganizationID: key.NamespaceID,
+		Roles:          key.BucketsRole,
+	}, nil
+}
+
+func (c *Client) UpdateAccessKeyRoles(ctx context.Context, input *types.AccessKeyUpdateInput) error {
+	roles := input.Roles
+	if roles == nil {
+		roles = []types.BucketRole{}
+	}
+
+	reqBody, err := json.Marshal(map[string]interface{}{
+		"id":           input.ID,
+		"buckets_role": roles,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to marshal access key role update: %w", err)
+	}
+
+	form := url.Values{}
+	form.Set("Req", string(reqBody))
+
+	var resp types.UpdateAccessKeyRolesResponse
+	if err := c.doIAMRequest(ctx, "/?Action=UpdateAccessKeyWithBucketsRole", form, &resp); err != nil {
+		return err
+	}
+
+	if resp.Status != "" && resp.Status != "success" {
+		if resp.Message != "" {
+			return errors.New(resp.Message)
+		}
+		return errors.New("failed to update access key roles")
+	}
+
+	return nil
+}
+
+func (c *Client) DeleteAccessKey(ctx context.Context, id, name string) error {
+	form := url.Values{}
+	form.Set("AccessKeyId", id)
+	if name != "" {
+		form.Set("UserName", name)
+	}
+
+	return c.doIAMRequest(ctx, "/?Action=DeleteAccessKey", form, nil)
 }
 
 func (c *Client) CreateBucket(ctx context.Context, input *types.BucketUpdateInput) error {
@@ -413,13 +623,61 @@ func (c *Client) bucketURL(bucketName string, queryParams map[string]string) str
 	return fmt.Sprintf("%s?%s", baseURL, query.Encode())
 }
 
+func (c *Client) iamURL(path string) string {
+	if strings.HasPrefix(path, "/") {
+		return c.iamEndpoint + path
+	}
+
+	return c.iamEndpoint + "/" + path
+}
+
+func (c *Client) doIAMRequest(ctx context.Context, path string, form url.Values, out interface{}) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.iamURL(path), strings.NewReader(form.Encode()))
+	if err != nil {
+		return fmt.Errorf("failed to create IAM request: %w", err)
+	}
+
+	req.Header.Set(HeaderContentType, "application/x-www-form-urlencoded")
+	req.Header.Set(HeaderAccept, "application/json")
+
+	//nolint:contextcheck
+	resp, err := c.doRequestWithRetry(req)
+	if err != nil {
+		return fmt.Errorf("failed to send IAM request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read IAM response: %w", err)
+	}
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return parseIAMError(resp.StatusCode, body)
+	}
+
+	if out == nil || len(body) == 0 {
+		return nil
+	}
+
+	if err := json.Unmarshal(body, out); err != nil {
+		return fmt.Errorf("failed to decode IAM response: %w", err)
+	}
+
+	return nil
+}
+
 func (c *Client) signRequest(req *http.Request) error {
 	// Get the current time for the request
 	now := time.Now()
 
 	// Set default headers
-	req.Header.Set(HeaderContentType, "application/json")
-	req.Header.Set(HeaderAccept, "application/json")
+	if req.Header.Get(HeaderContentType) == "" {
+		req.Header.Set(HeaderContentType, "application/json")
+	}
+	if req.Header.Get(HeaderAccept) == "" {
+		req.Header.Set(HeaderAccept, "application/json")
+	}
 
 	// Buffer the request body if it exists
 	var bodyBytes []byte
@@ -445,7 +703,7 @@ func (c *Client) signRequest(req *http.Request) error {
 	req.Header.Set(HeaderAmzContentSha, payloadHash)
 
 	// Sign the request using the signer
-	err := c.signer.SignHTTP(req.Context(), c.credentials, req, payloadHash, "s3", DefaultRegion, now)
+	err := c.signer.SignHTTP(req.Context(), c.credentials, req, payloadHash, sigV4ServiceS3, DefaultRegion, now)
 	if err != nil {
 		return fmt.Errorf("failed to sign request: %w", err)
 	}
@@ -472,6 +730,49 @@ func cloneRequest(req *http.Request) (*http.Request, error) {
 	}
 
 	return clonedReq, nil
+}
+
+type iamAPIError struct {
+	statusCode int
+	message    string
+}
+
+func (e *iamAPIError) Error() string {
+	if e.message == "" {
+		return fmt.Sprintf("iam request failed with status %d", e.statusCode)
+	}
+
+	return fmt.Sprintf("iam request failed with status %d: %s", e.statusCode, e.message)
+}
+
+func (e *iamAPIError) NotFound() bool {
+	return e.statusCode == http.StatusNotFound
+}
+
+func IsIAMNotFoundError(err error) bool {
+	var apiErr *iamAPIError
+	if errors.As(err, &apiErr) {
+		return apiErr.NotFound()
+	}
+
+	return false
+}
+
+func parseIAMError(statusCode int, body []byte) error {
+	var payload struct {
+		Message string `json:"Message"`
+	}
+	if err := json.Unmarshal(body, &payload); err == nil && payload.Message != "" {
+		return &iamAPIError{
+			statusCode: statusCode,
+			message:    payload.Message,
+		}
+	}
+
+	return &iamAPIError{
+		statusCode: statusCode,
+		message:    strings.TrimSpace(string(body)),
+	}
 }
 
 func validateBucketRequest(input *types.BucketUpdateInput) error {

@@ -2,14 +2,14 @@
 layout: ""
 page_title: "Provider: Tigris"
 description: |-
-  The Tigris provider allows you to create and manage Tigris buckets.
+  The Tigris provider allows you to create and manage Tigris buckets, IAM policies, and access keys.
 ---
 
 # Tigris Provider
 
-The Tigris provider is used to interact with buckets. This provider 
-supports creating, reading, updating, deleting, and importing Tigris 
-buckets with additional customization options like specifying access keys.
+The Tigris provider is used to interact with Tigris resources. This provider
+supports creating, reading, updating, deleting, and importing Tigris
+buckets, IAM policies, and access keys.
 
 The provider needs to be configured with the proper credentials
 before it can be used.
@@ -59,4 +59,5 @@ resource "tigris_bucket_public_access" "example_bucket_public_access" {
 
 - `access_key` (String) The access key. It can also be sourced from the AWS_ACCESS_KEY_ID environment variable.
 - `endpoint` (String) The endpoint for the Tigris object storage service.
+- `iam_endpoint` (String) The endpoint for the Tigris IAM service. It can also be sourced from the TIGRIS_IAM_ENDPOINT environment variable.
 - `secret_key` (String, Sensitive) The secret key. It can also be sourced from the AWS_SECRET_ACCESS_KEY environment variable.
