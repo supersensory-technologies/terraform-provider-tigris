@@ -43,5 +43,6 @@ go.work.sum
 *.tfstate.backup
 .terraformrc-test
 test/**/.terraform/
-test/**/.terraform.lock.hclPLAN.md
+test/**/.terraform.lock.hcl
+PLAN.md
 PLAN-v2.md

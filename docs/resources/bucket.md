@@ -58,6 +58,7 @@ resource "tigris_bucket" "dual_region_bucket" {
 ### Optional
 
 - `default_storage_tier` (String) The default storage tier for objects in the bucket: STANDARD, STANDARD_IA, GLACIER, or GLACIER_IR.
+- `deletion_protection` (Boolean) Enable deletion protection for this bucket. When enabled, the bucket cannot be deleted.
 - `enable_snapshot` (Boolean) Enable snapshots for this bucket. Cannot be changed after creation.
 - `location` (Block List, Max: 1) The location configuration for the bucket. Controls data placement and replication. (see [below for nested schema](#nestedblock--location))
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))

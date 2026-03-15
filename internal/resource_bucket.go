@@ -84,7 +84,7 @@ func resourceTigrisBucket() *schema.Resource {
 				Type:        schema.TypeBool,
 				Optional:    true,
 				Default:     false,
-				Description: "Enable delete protection for this bucket. When enabled, the bucket cannot be deleted.",
+				Description: "Enable deletion protection for this bucket. When enabled, the bucket cannot be deleted.",
 			},
 		},
 	}
@@ -149,8 +149,8 @@ func resourceBucketCreate(ctx context.Context, d *schema.ResourceData, meta inte
 
 	d.SetId(bucketName)
 
-	// Delete protection cannot be set at creation time; apply as a post-create update.
-	if v, ok := d.GetOk(names.AttrDeleteProtection); ok && v.(bool) {
+	// Deletion protection cannot be set at creation time; apply as a post-create update.
+	if d.Get(names.AttrDeleteProtection).(bool) {
 		deleteProtection := true
 		protectionInput := &types.BucketUpdateInput{
 			Bucket:           bucketName,
@@ -191,32 +191,27 @@ func resourceBucketRead(ctx context.Context, d *schema.ResourceData, meta interf
 		return nil
 	}
 
-	d.Set(names.AttrBucket, bucketName)
-
 	// Fetch metadata to read location and storage tier.
 	metadata, err := svc.GetBucketMetadata(ctx, bucketName)
 	if err != nil {
 		return diag.FromErr(fmt.Errorf("unable to read bucket metadata, %w", err))
 	}
 
-	// Set storage tier.
-	d.Set(names.AttrDefaultStorageTier, metadata.GetStorageClass())
+	var diags diag.Diagnostics
 
-	// Set location.
+	diags = append(diags, diag.FromErr(d.Set(names.AttrBucket, bucketName))...)
+	diags = append(diags, diag.FromErr(d.Set(names.AttrDefaultStorageTier, metadata.GetStorageClass()))...)
+
 	locationType, regions := metadata.GetLocationTypeAndRegions()
 	locationBlock := map[string]interface{}{
 		names.AttrLocationType:    string(locationType),
 		names.AttrLocationRegions: regions,
 	}
-	d.Set(names.AttrLocation, []interface{}{locationBlock})
+	diags = append(diags, diag.FromErr(d.Set(names.AttrLocation, []interface{}{locationBlock}))...)
+	diags = append(diags, diag.FromErr(d.Set(names.AttrEnableSnapshot, metadata.IsSnapshotEnabled()))...)
+	diags = append(diags, diag.FromErr(d.Set(names.AttrDeleteProtection, metadata.IsDeleteProtectionEnabled()))...)
 
-	// Set enable snapshot.
-	d.Set(names.AttrEnableSnapshot, metadata.IsSnapshotEnabled())
-
-	// Set delete protection.
-	d.Set(names.AttrDeleteProtection, metadata.IsDeleteProtectionEnabled())
-
-	return nil
+	return diags
 }
 
 func resourceBucketUpdate(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
@@ -275,6 +270,13 @@ func resourceBucketDelete(ctx context.Context, d *schema.ResourceData, meta inte
 	svc := meta.(*Client)
 
 	bucketName := d.Id()
+
+	if d.Get(names.AttrDeleteProtection).(bool) {
+		return diag.Errorf(
+			"bucket %q has %s enabled; set %s = false before destroying",
+			bucketName, names.AttrDeleteProtection, names.AttrDeleteProtection,
+		)
+	}
 
 	err := svc.DeleteBucket(ctx, bucketName)
 	if err != nil {

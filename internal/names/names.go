@@ -20,7 +20,7 @@ const (
 	AttrDefaultStorageTier = "default_storage_tier"
 
 	// Bucket protection attributes.
-	AttrDeleteProtection = "delete_protection"
+	AttrDeleteProtection = "deletion_protection"
 
 	// Snapshot and fork attributes.
 	AttrEnableSnapshot           = "enable_snapshot"
