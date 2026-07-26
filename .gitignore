@@ -45,5 +45,3 @@ go.work.sum
 test/**/.terraform/
 test/**/.terraform.lock.hcl
 .gocache/
-PLAN.md
-PLAN-v2.md

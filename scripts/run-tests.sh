@@ -13,6 +13,7 @@ SUITES=(
   bucket-update
   bucket-public-access
   bucket-lifecycle
+  bucket-delete-protection
 )
 
 # Suites that must be idempotent: a second plan after apply has to report no
@@ -76,6 +77,20 @@ for suite in "${SUITES[@]}"; do
   else
     FAILED_SUITES+=("$suite")
     echo "==> FAIL: ${suite}"
+  fi
+
+  # Optional per-suite hook, run before the shared destroy below. A suite whose
+  # resources cannot be destroyed in the state the test leaves them in (for
+  # example, a bucket with deletion protection enabled) uses this to make them
+  # destroyable, and to assert any behaviour that only the pre-destroy state can
+  # show. Suite-specific knowledge stays in the suite directory.
+  if [ -x "${suite_dir}/pre-destroy.sh" ]; then
+    if TEST_ID="${TEST_ID}" "${suite_dir}/pre-destroy.sh"; then
+      echo "==> PASS: ${suite} (pre-destroy)"
+    else
+      FAILED_SUITES+=("$suite")
+      echo "==> FAIL: ${suite} (pre-destroy)"
+    fi
   fi
 
   # Always destroy to clean up resources
