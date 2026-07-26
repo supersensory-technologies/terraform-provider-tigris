@@ -166,13 +166,20 @@ func resourceBucketCreate(ctx context.Context, d *schema.ResourceData, meta inte
 			// tainted resource with delete_protection=true in state
 			// while the API has it disabled — that would permanently
 			// block destroy.
-			d.SetId("")
 			if deleteErr := svc.DeleteBucket(ctx, bucketName); deleteErr != nil {
+				// Rollback failed, so the bucket still exists. Keep the ID:
+				// returning an error with no ID makes Terraform forget the
+				// resource, orphaning a bucket that may already have
+				// protection enabled (the PATCH can succeed with its response
+				// lost). Retaining it keeps the bucket destroyable through
+				// Terraform once protection is cleared.
 				return diag.FromErr(fmt.Errorf(
-					"unable to enable delete protection (%w); also failed to roll back bucket: %w",
-					err, deleteErr,
+					"unable to enable delete protection (%w); also failed to roll back bucket %q, "+
+						"which remains in state and may have protection enabled: %w",
+					err, bucketName, deleteErr,
 				))
 			}
+			d.SetId("")
 			return diag.FromErr(fmt.Errorf(
 				"unable to enable delete protection (bucket rolled back): %w", err,
 			))
