@@ -81,7 +81,7 @@ for suite in "${SUITES[@]}"; do
 
   # Optional per-suite hook, run before the shared destroy below. A suite whose
   # resources cannot be destroyed in the state the test leaves them in (for
-  # example, a bucket with deletion protection enabled) uses this to make them
+  # example, a bucket with delete protection enabled) uses this to make them
   # destroyable, and to assert any behaviour that only the pre-destroy state can
   # show. Suite-specific knowledge stays in the suite directory.
   if [ -x "${suite_dir}/pre-destroy.sh" ]; then

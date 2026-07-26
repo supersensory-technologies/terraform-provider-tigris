@@ -84,7 +84,7 @@ func resourceTigrisBucket() *schema.Resource {
 				Type:        schema.TypeBool,
 				Optional:    true,
 				Default:     false,
-				Description: "Enable deletion protection for this bucket. When enabled, the bucket cannot be deleted.",
+				Description: "Enable delete protection for this bucket. When enabled, neither the bucket nor the objects it contains can be deleted by any caller, including applications using the S3 API. Set to false and apply before destroying the bucket.",
 			},
 		},
 	}
@@ -149,7 +149,7 @@ func resourceBucketCreate(ctx context.Context, d *schema.ResourceData, meta inte
 
 	d.SetId(bucketName)
 
-	// Deletion protection cannot be set at creation time; apply as a post-create update.
+	// Delete protection cannot be set at creation time; apply as a post-create update.
 	if d.Get(names.AttrDeleteProtection).(bool) {
 		deleteProtection := true
 		protectionInput := &types.BucketUpdateInput{
@@ -163,18 +163,18 @@ func resourceBucketCreate(ctx context.Context, d *schema.ResourceData, meta inte
 
 		if err := svc.UpdateBucket(ctx, protectionInput); err != nil {
 			// Roll back: delete the bucket so Terraform doesn't store a
-			// tainted resource with deletion_protection=true in state
+			// tainted resource with delete_protection=true in state
 			// while the API has it disabled — that would permanently
 			// block destroy.
 			d.SetId("")
 			if deleteErr := svc.DeleteBucket(ctx, bucketName); deleteErr != nil {
 				return diag.FromErr(fmt.Errorf(
-					"unable to enable deletion protection (%w); also failed to roll back bucket: %w",
+					"unable to enable delete protection (%w); also failed to roll back bucket: %w",
 					err, deleteErr,
 				))
 			}
 			return diag.FromErr(fmt.Errorf(
-				"unable to enable deletion protection (bucket rolled back): %w", err,
+				"unable to enable delete protection (bucket rolled back): %w", err,
 			))
 		}
 	}
